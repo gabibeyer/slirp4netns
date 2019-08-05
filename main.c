@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <net/route.h>
+#include <ifaddrs.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <regex.h>
@@ -72,6 +73,23 @@ static int nsenter(pid_t target_pid, char *netns, char *userns,
     }
     close(netnsfd);
     return 0;
+}
+
+static bool tap_exists(const char *tapname) {
+    struct ifaddrs *addrs, *tmp;
+    bool flag = false;
+
+    getifaddrs(&addrs);
+    tmp = addrs;
+    while (tmp) {
+        if (strcmp(tmp->ifa_name, tapname) == 0) {
+            flag = true;
+            break;
+        }
+        tmp = tmp->ifa_next;
+    }
+    freeifaddrs(addrs);
+    return flag;
 }
 
 static int open_tap(const char *tapname)
@@ -202,11 +220,13 @@ static int child(int sock, pid_t target_pid, bool do_config_network,
     if ((rc = nsenter(target_pid, netns_path, userns_path, false)) < 0) {
         return rc;
     }
-    if ((tapfd = open_tap(tapname)) < 0) {
-        return tapfd;
-    }
-    if (do_config_network && configure_network(tapname, cfg) < 0) {
-        return -1;
+    if (!tap_exists(tapname)) {
+        if ((tapfd = open_tap(tapname)) < 0) {
+            return tapfd;
+        }
+        if (do_config_network && configure_network(tapname, cfg) < 0) {
+            return -1;
+        }
     }
     if (sendfd(sock, tapfd) < 0) {
         close(tapfd);
